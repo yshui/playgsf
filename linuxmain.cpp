@@ -61,6 +61,7 @@ extern int8_t soundBuffer[4][735];
 extern uint8_t *ioMem;
 extern int16_t directBuffer[2][735];
 extern int soundLevel1;
+extern int enableDS;
 
 extern char soundEcho;
 extern char soundLowPass;
@@ -101,6 +102,9 @@ static int render_thread(void *ptr) {
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_QUIT)
 				g_playing = false;
+			if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_d) {
+				enableDS ^= 1;
+			}
 		}
 	}
 	return 0;

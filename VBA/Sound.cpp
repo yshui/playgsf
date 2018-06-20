@@ -136,6 +136,7 @@ int soundIndex = 0;
 int soundBufferIndex = 0;
 int soundDebug = 0;
 bool soundOffFlag = false;
+int enableDS = 1;
 
 int sound1On = 0;
 int sound1ATL = 0;
@@ -998,7 +999,7 @@ void soundMix()
     break;
   }
 
-  res += cgbRes;
+  res = res*enableDS+cgbRes;
 
   if(soundEcho) {
     res *= 2;
@@ -1089,7 +1090,7 @@ void soundMix()
     break;
   }
 
-  res += cgbRes;
+  res = res*enableDS+cgbRes;
   
   if(soundEcho) {
     res *= 2;
