@@ -470,8 +470,8 @@ s,@ECHO_N@,-n,;t t
 s,@ECHO_T@,,;t t
 s,@LIBS@,,;t t
 s,@CC@,gcc,;t t
-s,@CFLAGS@,-DLINUX -I./VBA -DVERSION_STR=\"0.07\" -DHA_VERSION_STR=\"0.11\" -I./libresample-0.1.3/include -O3,;t t
-s,@LDFLAGS@,-lz -lresample -L./libresample-0.1.3 -lao,;t t
+s,@CFLAGS@,-DLINUX -I./VBA -DVERSION_STR=\"0.07\" -DHA_VERSION_STR=\"0.11\" -I./libresample/include -O3,;t t
+s,@LDFLAGS@,-lz -lao,;t t
 s,@CPPFLAGS@,,;t t
 s,@ac_ct_CC@,gcc,;t t
 s,@EXEEXT@,,;t t
