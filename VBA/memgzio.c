@@ -542,7 +542,7 @@ int ZEXPORT memgzread (file, buf, len)
 */
 int ZEXPORT memgzwrite (file, buf, len)
     gzFile file;
-    const voidp buf;
+    voidpc buf;
     unsigned len;
 {
     mem_stream *s = (mem_stream*)file;

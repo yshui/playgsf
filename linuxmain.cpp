@@ -15,7 +15,7 @@
 #include <time.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_render.h>
-
+#include <mutex>
 
 using std::chrono::steady_clock;
 using std::chrono::duration;
@@ -26,7 +26,7 @@ extern "C" {
 #include "gsf.h"
 }
 
-extern "C" { 
+extern "C" {
 int defvolume=1000;
 int relvolume=1000;
 int TrackLength=0;
@@ -43,10 +43,16 @@ int sndBitsPerSample=16;
 
 int deflen=120,deffade=4;
 #define W 800
-int draw_buf[4][2*W];
-int n_old[4];
+int draw_buf[2][4][2*W];
+int n_old[2][4];
 // Draw buf starts full, all samples are 0
-int last[4] = {2*W, 2*W, 2*W, 2*W};
+int last[2][4] = {
+	{2*W, 2*W, 2*W, 2*W},
+	{2*W, 2*W, 2*W, 2*W},
+};
+
+int curr_buf;
+std::mutex bufmtx;
 
 extern unsigned short soundFinalWave[1470];
 extern int soundBufferLen;
@@ -66,8 +72,35 @@ int seek_needed; // if != -1, it is the point that the decode thread should seek
 
 static int g_playing = 0;
 static int g_must_exit = 0;
-static SDL_Renderer *rr;
-static SDL_Window *w;
+
+struct RenderThread {
+	SDL_Renderer *rr;
+	SDL_Window *w;
+};
+
+static int render_thread(void *ptr) {
+	auto d = reinterpret_cast<RenderThread*>(ptr);
+	while (g_playing) {
+		SDL_SetRenderDrawColor(d->rr, 0, 0, 0, SDL_ALPHA_OPAQUE);
+		SDL_RenderClear(d->rr);
+		SDL_SetRenderDrawColor(d->rr, 0, 255, 0, SDL_ALPHA_OPAQUE);
+		bufmtx.lock();
+		int c = curr_buf;
+		for (int i = 0; i < 4; i++) {
+			int offset = 200+150*i;
+			for (int j = 1; j < W; j++)
+				SDL_RenderDrawLine(d->rr, j-1, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+		}
+		bufmtx.unlock();
+		SDL_RenderPresent(d->rr);
+		SDL_Event e;
+		while (SDL_PollEvent(&e)) {
+			if (e.type == SDL_QUIT)
+				g_playing = false;
+		}
+	}
+	return 0;
+}
 
 static ao_device *snd_ao;
 
@@ -78,37 +111,37 @@ extern "C" void end_of_track()
 {
 	g_playing = 0;
 }
-	
-void updateBuf(int ch, float m) {
+
+void updateBuf(int c, int ch, float m) {
 	int zeroCrossing = -1;
-	int min = *std::min_element(draw_buf[ch], draw_buf[ch]+W);
-	int max = *std::max_element(draw_buf[ch], draw_buf[ch]+W);
+	int min = *std::min_element(draw_buf[c][ch], draw_buf[c][ch]+W);
+	int max = *std::max_element(draw_buf[c][ch], draw_buf[c][ch]+W);
 	int th = (max+min)/2;
 
 	int min_need = W-soundIndex;
-	int search_head = last[ch]-min_need;
+	int search_head = last[c][ch]-min_need;
 	for (int i = search_head; i >= 1; i--) {
-		if (draw_buf[ch][i-1] >= th && draw_buf[ch][i] < th) {
+		if (draw_buf[c][ch][i-1] >= th && draw_buf[c][ch][i] < th) {
 			zeroCrossing = i;
 			break;
 		}
 	}
 
 	// throw away first `zeroCrossing` samples
-	if (zeroCrossing < n_old[ch])
+	if (zeroCrossing < n_old[c][ch])
 		zeroCrossing = search_head;
 
 	// Update the number of stale samples
-	n_old[ch] = last[ch]-zeroCrossing;
+	n_old[!c][ch] = last[c][ch]-zeroCrossing;
 
 	// Move stale samples to the front
-	memmove(draw_buf[ch], draw_buf[ch]+zeroCrossing, sizeof(int)*n_old[ch]);
+	memcpy(draw_buf[!c][ch], draw_buf[c][ch]+zeroCrossing, sizeof(int)*n_old[!c][ch]);
 
 	// Add fresh samples
 	for (int i = 0; i < soundIndex; i++)
-		draw_buf[ch][n_old[ch]+i] = soundBuffer[ch][i] * m;
-	last[ch] = n_old[ch]+soundIndex;
-	assert(last[ch] >= W);
+		draw_buf[!c][ch][n_old[!c][ch]+i] = soundBuffer[ch][i] * m;
+	last[!c][ch] = n_old[!c][ch]+soundIndex;
+	assert(last[!c][ch] >= W);
 }
 extern "C" void writeSound(void)
 {
@@ -119,9 +152,6 @@ extern "C" void writeSound(void)
 	//fprintf(stderr, "%dhz\n", (int)(1/diff.count()));
 	//last = now;
 	int ratio = ioMem[0x82] & 3;
-	SDL_SetRenderDrawColor(rr, 0, 0, 0, SDL_ALPHA_OPAQUE);
-	SDL_RenderClear(rr);
-	SDL_SetRenderDrawColor(rr, 0, 255, 0, SDL_ALPHA_OPAQUE);
 	float m = soundLevel1;
 	switch(ratio) {
 		case 0:
@@ -134,13 +164,13 @@ extern "C" void writeSound(void)
 		case 2:
 			break;
 	}
-	for (int i = 0; i < 4; i++) {
-		updateBuf(i, m);
-		int offset = 200+150*i;
-		for (int j = 1; j < W; j++)
-			SDL_RenderDrawLine(rr, j-1, offset-draw_buf[i][j-1], j, offset-draw_buf[i][j]);
-	}
-	SDL_RenderPresent(rr);
+
+	for (int i = 0; i < 4; i++)
+		updateBuf(curr_buf, i, m);
+
+	bufmtx.lock();
+	curr_buf = !curr_buf;
+	bufmtx.unlock();
 
 	ao_play(snd_ao, (char*)soundFinalWave, ret);
 
@@ -151,10 +181,10 @@ extern "C" void signal_handler(int sig)
 {
 	struct timeval tv_now;
 	int elaps_milli;
-	
+
 	static int first=1;
 	static struct timeval last_int = {0,0};
-	
+
 	g_playing = 0;
 	gettimeofday(&tv_now, NULL);
 
@@ -178,7 +208,7 @@ static void shuffle_list(char *filelist[], int num_files)
 	char *tmp;
 	srand((int)time(NULL));
 	for (i=0; i<num_files; i++)
-	{  
+	{
 		tmp = filelist[i];
 		n = (int)((double)num_files*rand()/(RAND_MAX+1.0));
 		filelist[i] = filelist[n];
@@ -206,23 +236,25 @@ int main(int argc, char **argv)
 	soundQuality = 0;
 
 	DetectSilence=1;
-	silencelength=5;	
+	silencelength=5;
 	IgnoreTrackLength=0;
 	DefaultLength=150000;
 	TrailingSilence=1000;
 	playforever=0;
 
 	SDL_Init(SDL_INIT_VIDEO);
-	w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  800, 0);
-	rr = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
 
-	while((r=getopt(argc, argv, "hlsrieWL:t:"))>=0)	
+	RenderThread rrt;
+	rrt.w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  800, 0);
+	rrt.rr = SDL_CreateRenderer(rrt.w, -1, SDL_RENDERER_ACCELERATED);
+
+	while((r=getopt(argc, argv, "hlsrieWL:t:"))>=0)
 	{
 		char *e;
 		switch(r)
 		{
 			case 'h':
-				printf("playgsf version %s (based on Highly Advanced version %s)\n\n", 
+				printf("playgsf version %s (based on Highly Advanced version %s)\n\n",
 						VERSION_STR, HA_VERSION_STR);
 				printf("Usage: ./playgsf [options] files...\n\n");
 				printf("  -l        Enable low pass filer\n");
@@ -250,7 +282,7 @@ int main(int argc, char **argv)
 				if (e==optarg) {
 					fprintf(stderr, "Bad value\n");
 					return 1;
-				}				
+				}
 				break;
 			case 'e':
 				playforever = 1;
@@ -260,10 +292,10 @@ int main(int argc, char **argv)
 				if (e==optarg) {
 					fprintf(stderr, "Bad value\n");
 					return 1;
-				}				
+				}
 				break;
 			case 'r':
-				random = 1;				
+				random = 1;
 				break;
 			case 'W':
 				fileoutput = 1;
@@ -274,7 +306,7 @@ int main(int argc, char **argv)
 				break;
 		}
 	}
-	
+
 	if (argc-optind<=0) {
 		printf("No files specified! For help, try -h\n");
 		return 1;
@@ -283,7 +315,7 @@ int main(int argc, char **argv)
 
 	if (random) { shuffle_list(&argv[optind], argc-optind); }
 
-	printf("playgsf version %s (based on Highly Advanced version %s)\n\n", 
+	printf("playgsf version %s (based on Highly Advanced version %s)\n\n",
 				VERSION_STR, HA_VERSION_STR);
 
 	signal(SIGINT, signal_handler);
@@ -296,7 +328,7 @@ int main(int argc, char **argv)
 		decode_pos_ms = 0;
 		seek_needed = -1;
 		TrailingSilence=1000;
-		
+
 		r = GSFRun(argv[fi]);
 		if (!r) {
 			fi++;
@@ -306,60 +338,60 @@ int main(int argc, char **argv)
 		g_playing = 1;
 
 		psftag_readfromfile((void*)tag, argv[fi]);
-	
+
 		BOLD(); printf("Filename: "); NORMAL();
 		printf("%s\n", basename(argv[fi]));
 		BOLD(); printf("Channels: "); NORMAL();
 		printf("%d\n", sndNumChannels);
 		BOLD(); printf("Sample rate: "); NORMAL();
 		printf("%d\n", sndSamplesPerSec);
-		
+
 		if (!psftag_getvar(tag, "title", title_str, sizeof(title_str)-1)) {
 			BOLD(); printf("Title: "); NORMAL();
 			printf("%s\n", title_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "artist", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Artist: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "game", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Game: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "year", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Year: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "copyright", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Copyright: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "gsfby", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("GSF By: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "tagger", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Tagger: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "comment", tmp_str, sizeof(tmp_str)-1)) {
 			BOLD(); printf("Comment: "); NORMAL();
 			printf("%s\n", tmp_str);
 		}
-		
+
 		if (!psftag_getvar(tag, "fade", fade_str, sizeof(fade_str)-1)) {
 			FadeLength = LengthFromString(fade_str);
 			BOLD(); printf("Fade: "); NORMAL();
 			printf("%s (%d ms)\n", fade_str, FadeLength);
 		}
-		
+
 		if (!psftag_raw_getvar(tag, "length", length_str, sizeof(length_str)-1)) {
 			TrackLength = LengthFromString(length_str) + FadeLength;
 			BOLD(); printf("Length: "); NORMAL();
@@ -375,7 +407,7 @@ int main(int argc, char **argv)
 		}
 
 
-		/* Must be done after GSFrun so sndNumchannels and 
+		/* Must be done after GSFrun so sndNumchannels and
 		 * sndSamplesPerSec are set to valid values */
 		ao_initialize();
 		ao_sample_format format_ao = {
@@ -391,21 +423,17 @@ int main(int argc, char **argv)
 					&format_ao,
 					NULL);
 		}
-		
+
+		SDL_Thread *thrd = SDL_CreateThread(render_thread, "render thread", &rrt);
 		while(g_playing)
 		{
-			SDL_Event e;
-			while (SDL_PollEvent(&e)) {
-				if (e.type == SDL_QUIT)
-					g_playing = false;
-			}
 			int remaining = TrackLength - (int)decode_pos_ms;
-			if (remaining<0) { 
+			if (remaining<0) {
 				// this happens during silence period
 				remaining = 0;
 			}
 			EmulationLoop();
-		
+
 			BOLD(); printf("Time: "); NORMAL();
 			printf("%02d:%02d.%02d ",
 					(int)(decode_pos_ms/1000.0)/60,
@@ -417,20 +445,22 @@ int main(int argc, char **argv)
 					remaining/1000/60, (remaining/1000)%60, (remaining/10%100)
 						);
 				/*BOLD();*/ printf("] of "); /*NORMAL();*/
-				printf("%02d:%02d.%02d ", 
-					TrackLength/1000/60, (TrackLength/1000)%60, (TrackLength/10%100)); 
+				printf("%02d:%02d.%02d ",
+					TrackLength/1000/60, (TrackLength/1000)%60, (TrackLength/10%100));
 			}
 			BOLD(); printf("  GBA Cpu: "); NORMAL();
 			printf("%02d%% ", cpupercent);
 			printf("     \r");
-			
+
 			fflush(stdout);
 		}
 		printf("\n--\n");
+		SDL_WaitThread(thrd, NULL);
 		ao_close(snd_ao);
 		fi++;
 	}
 
+	free(tag);
 	ao_shutdown();
 	SDL_Quit();
 	return 0;

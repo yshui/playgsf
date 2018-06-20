@@ -2,8 +2,8 @@ CC=@CC@
 CPP=@CXX@
 LD=$(CPP)
 
-CFLAGS=@CFLAGS@ -fPIC -fpermissive
-CXXFLAGS=@CXXFLAGS@ -fPIC -fpermissive
+CFLAGS=@CFLAGS@ -fPIC -fpermissive -std=gnu++14
+CXXFLAGS=@CXXFLAGS@ -fPIC -fpermissive -std=gnu++14
 LDFLAGS=@LDFLAGS@ -fPIC -fpermissive -no-pie -lSDL2
 
 OBJS=gsf.o VBA/GBA.o VBA/Globals.o VBA/Sound.o VBA/Util.o VBA/bios.o VBA/memgzio.o VBA/snd_interp.o VBA/unzip.o linuxmain.o VBA/psftag.o \

@@ -62,7 +62,7 @@ extern "C" {
 //extern u16 systemColorMap16[0x10000];
 //extern u32 systemColorMap32[0x10000];
 
-static int (ZEXPORT *utilGzWriteFunc)(gzFile, const voidp, unsigned int) = NULL;
+static int (ZEXPORT *utilGzWriteFunc)(gzFile, voidpc, unsigned int) = NULL;
 static int (ZEXPORT *utilGzReadFunc)(gzFile, voidp, unsigned int) = NULL;
 static int (ZEXPORT *utilGzCloseFunc)(gzFile) = NULL;
 /*
@@ -572,7 +572,7 @@ struct GSF_FILE {
 	bool gsfloaded;
 };
 
-static int copy_int(unsigned int *dst, unsigned char *src)
+static void copy_int(unsigned int *dst, unsigned char *src)
 {
 	*dst = src[0] | (src[1]<<8) | (src[2]<<16) | (src[3]<<24);
 }
@@ -917,7 +917,7 @@ bool utilIsGSF(const char * file)
   
 
   if(strlen(file) > 4) {
-    char *p = strrchr(file,'.');
+    const char *p = strrchr(file,'.');
 
 	if(p != NULL) {
 	  if(_stricmp(p, ".gsf") == 0)
@@ -934,7 +934,7 @@ bool utilIsGBAImage(const char * file)
 {
   cpuIsMultiBoot = false;
   if(strlen(file) > 4) {
-    char * p = strrchr(file,'.');
+    const char * p = strrchr(file,'.');
 
     if(p != NULL) {
       //if(_stricmp(p, ".gba") == 0)
@@ -1484,7 +1484,7 @@ void utilWriteData(gzFile gzFile, variable_desc *data)
 
 gzFile utilGzOpen(const char *file, const char *mode)
 {
-  utilGzWriteFunc = (int (ZEXPORT *)(void *,void * const, unsigned int))gzwrite;
+  utilGzWriteFunc = gzwrite;
   utilGzReadFunc = gzread;
   utilGzCloseFunc = gzclose;
 
