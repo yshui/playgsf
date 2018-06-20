@@ -88,8 +88,12 @@ static int render_thread(void *ptr) {
 		int c = curr_buf;
 		for (int i = 0; i < 4; i++) {
 			int offset = 200+150*i;
-			for (int j = 1; j < W; j++)
-				SDL_RenderDrawLine(d->rr, j-1, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+			for (int j = 1; j < W; j++) {
+				if (draw_buf[c][i][j-1] == draw_buf[c][i][j])
+					SDL_RenderDrawLine(d->rr, j-1, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+				else
+					SDL_RenderDrawLine(d->rr, j, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+			}
 		}
 		bufmtx.unlock();
 		SDL_RenderPresent(d->rr);
