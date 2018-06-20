@@ -43,12 +43,12 @@ int sndBitsPerSample=16;
 
 int deflen=120,deffade=4;
 #define W 800
-int draw_buf[2][4][2*W];
-int n_old[2][4];
+int draw_buf[2][6][2*W];
+int n_old[2][6];
 // Draw buf starts full, all samples are 0
-int last[2][4] = {
-	{2*W, 2*W, 2*W, 2*W},
-	{2*W, 2*W, 2*W, 2*W},
+int last[2][6] = {
+	{2*W, 2*W, 2*W, 2*W, 2*W, 2*W},
+	{2*W, 2*W, 2*W, 2*W, 2*W, 2*W},
 };
 
 int curr_buf;
@@ -59,7 +59,7 @@ extern int soundBufferLen;
 extern int soundIndex;
 extern int8_t soundBuffer[4][735];
 extern uint8_t *ioMem;
-extern uint16_t directBuffer[2][735];
+extern int16_t directBuffer[2][735];
 extern int soundLevel1;
 
 extern char soundEcho;
@@ -86,8 +86,8 @@ static int render_thread(void *ptr) {
 		SDL_SetRenderDrawColor(d->rr, 0, 255, 0, SDL_ALPHA_OPAQUE);
 		bufmtx.lock();
 		int c = curr_buf;
-		for (int i = 0; i < 4; i++) {
-			int offset = 200+150*i;
+		for (int i = 0; i < 6; i++) {
+			int offset = 100+150*i;
 			for (int j = 1; j < W; j++) {
 				if (draw_buf[c][i][j-1] == draw_buf[c][i][j])
 					SDL_RenderDrawLine(d->rr, j-1, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
@@ -116,7 +116,8 @@ extern "C" void end_of_track()
 	g_playing = 0;
 }
 
-void updateBuf(int c, int ch, float m) {
+template <typename T>
+void updateBuf(int c, int ch, float m, T *data, int datalen) {
 	int zeroCrossing = -1;
 	int min = *std::min_element(draw_buf[c][ch], draw_buf[c][ch]+W);
 	int max = *std::max_element(draw_buf[c][ch], draw_buf[c][ch]+W);
@@ -142,9 +143,9 @@ void updateBuf(int c, int ch, float m) {
 	memcpy(draw_buf[!c][ch], draw_buf[c][ch]+zeroCrossing, sizeof(int)*n_old[!c][ch]);
 
 	// Add fresh samples
-	for (int i = 0; i < soundIndex; i++)
-		draw_buf[!c][ch][n_old[!c][ch]+i] = soundBuffer[ch][i] * m;
-	last[!c][ch] = n_old[!c][ch]+soundIndex;
+	for (int i = 0; i < datalen; i++)
+		draw_buf[!c][ch][n_old[!c][ch]+i] = data[i] * m;
+	last[!c][ch] = n_old[!c][ch]+datalen;
 	assert(last[!c][ch] >= W);
 }
 extern "C" void writeSound(void)
@@ -156,6 +157,8 @@ extern "C" void writeSound(void)
 	//fprintf(stderr, "%dhz\n", (int)(1/diff.count()));
 	//last = now;
 	int ratio = ioMem[0x82] & 3;
+	int dsaRatio = ioMem[0x82] & 4;
+	int dsbRatio = ioMem[0x82] & 8;
 	float m = soundLevel1;
 	switch(ratio) {
 		case 0:
@@ -170,7 +173,19 @@ extern "C" void writeSound(void)
 	}
 
 	for (int i = 0; i < 4; i++)
-		updateBuf(curr_buf, i, m);
+		updateBuf(curr_buf, i, m, soundBuffer[i], soundIndex);
+	if (!dsaRatio)
+		m = 0.5;
+	else
+		m = 1;
+	m = m / float(soundLevel1) / 52.0;
+	updateBuf(curr_buf, 4, m, directBuffer[0], soundIndex);
+	if (!dsbRatio)
+		m = 0.5;
+	else
+		m = 1;
+	m = m / float(soundLevel1) / 52.0;
+	updateBuf(curr_buf, 5, m, directBuffer[1], soundIndex);
 
 	bufmtx.lock();
 	curr_buf = !curr_buf;
@@ -190,7 +205,7 @@ extern "C" void signal_handler(int sig)
 	static struct timeval last_int = {0,0};
 
 	g_playing = 0;
-	gettimeofday(&tv_now, NULL);
+	;gettimeofday(&tv_now, NULL);
 
 	if (first) {
 		first = 0;
@@ -249,7 +264,7 @@ int main(int argc, char **argv)
 	SDL_Init(SDL_INIT_VIDEO);
 
 	RenderThread rrt;
-	rrt.w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  800, 0);
+	rrt.w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  900, 0);
 	rrt.rr = SDL_CreateRenderer(rrt.w, -1, SDL_RENDERER_ACCELERATED);
 
 	while((r=getopt(argc, argv, "hlsrieWL:t:"))>=0)
