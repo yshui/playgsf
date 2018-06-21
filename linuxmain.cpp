@@ -80,33 +80,48 @@ struct RenderThread {
 };
 
 static int render_thread(void *ptr) {
-	auto d = reinterpret_cast<RenderThread*>(ptr);
-	while (g_playing) {
-		SDL_SetRenderDrawColor(d->rr, 0, 0, 0, SDL_ALPHA_OPAQUE);
-		SDL_RenderClear(d->rr);
-		SDL_SetRenderDrawColor(d->rr, 0, 255, 0, SDL_ALPHA_OPAQUE);
+	SDL_GL_SetSwapInterval(1);
+	auto w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  900, 0);
+	auto rr = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
+	int mybuf[6][2*W];
+	while (!g_must_exit) {
+		SDL_SetRenderDrawColor(rr, 0, 0, 0, SDL_ALPHA_OPAQUE);
+		SDL_RenderClear(rr);
+		SDL_SetRenderDrawColor(rr, 0, 255, 0, SDL_ALPHA_OPAQUE);
 		bufmtx.lock();
 		int c = curr_buf;
+		memcpy(mybuf, draw_buf[c], sizeof(mybuf));
+		bufmtx.unlock();
 		for (int i = 0; i < 6; i++) {
 			int offset = 100+150*i;
 			for (int j = 1; j < W; j++) {
-				if (draw_buf[c][i][j-1] == draw_buf[c][i][j])
-					SDL_RenderDrawLine(d->rr, j-1, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+				if (mybuf[i][j-1] == mybuf[i][j])
+					SDL_RenderDrawLine(rr, j-1, offset-mybuf[i][j-1], j, offset-mybuf[i][j]);
 				else
-					SDL_RenderDrawLine(d->rr, j, offset-draw_buf[c][i][j-1], j, offset-draw_buf[c][i][j]);
+					SDL_RenderDrawLine(rr, j, offset-mybuf[i][j-1], j, offset-mybuf[i][j]);
 			}
 		}
-		bufmtx.unlock();
-		SDL_RenderPresent(d->rr);
+		SDL_RenderPresent(rr);
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) {
-			if (e.type == SDL_QUIT)
+			if (e.type == SDL_QUIT) {
 				g_playing = false;
-			if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_d) {
-				enableDS ^= 1;
+				g_must_exit = true;
+			}
+			if (e.type == SDL_KEYDOWN) {
+				switch(e.key.keysym.sym) {
+				case SDLK_d:
+					enableDS ^= 1;
+					break;
+				case SDLK_RIGHT:
+					g_playing = false;
+					break;
+				}
 			}
 		}
 	}
+	SDL_DestroyRenderer(rr);
+	SDL_DestroyWindow(w);
 	return 0;
 }
 
@@ -243,9 +258,6 @@ static void shuffle_list(char *filelist[], int num_files)
 #define BOLD() printf("%c[36m", 27);
 #define NORMAL() printf("%c[0m", 27);
 
-
-
-
 int main(int argc, char **argv)
 {
 	int r, tmp, fi, random=0;
@@ -267,9 +279,6 @@ int main(int argc, char **argv)
 
 	SDL_Init(SDL_INIT_VIDEO);
 
-	RenderThread rrt;
-	rrt.w = SDL_CreateWindow("playgsf", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W,  900, 0);
-	rrt.rr = SDL_CreateRenderer(rrt.w, -1, SDL_RENDERER_ACCELERATED);
 
 	while((r=getopt(argc, argv, "hlsrieWL:t:"))>=0)
 	{
@@ -346,6 +355,7 @@ int main(int argc, char **argv)
 	tag = (char*)malloc(50001);
 
 	fi = optind;
+	SDL_Thread *thrd = SDL_CreateThread(render_thread, "render thread", NULL);
 	while (!g_must_exit && fi < argc)
 	{
 		decode_pos_ms = 0;
@@ -447,7 +457,6 @@ int main(int argc, char **argv)
 					NULL);
 		}
 
-		SDL_Thread *thrd = SDL_CreateThread(render_thread, "render thread", &rrt);
 		while(g_playing)
 		{
 			int remaining = TrackLength - (int)decode_pos_ms;
@@ -478,11 +487,11 @@ int main(int argc, char **argv)
 			fflush(stdout);
 		}
 		printf("\n--\n");
-		SDL_WaitThread(thrd, NULL);
 		ao_close(snd_ao);
 		fi++;
 	}
 
+	SDL_WaitThread(thrd, NULL);
 	free(tag);
 	ao_shutdown();
 	SDL_Quit();
