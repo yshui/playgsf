@@ -16,6 +16,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_render.h>
 #include <mutex>
+#include <string>
 
 using std::chrono::steady_clock;
 using std::chrono::duration;
@@ -36,8 +37,10 @@ int playforever=0;
 int fileoutput=0;
 int TrailingSilence=1000;
 int DetectSilence=0, silencedetected=0, silencelength=5;
-
+int CliOnly=0;
+int noinfo=0;
 }
+std::string OutputFile = std::string("");
 int cpupercent=0, sndSamplesPerSec, sndNumChannels;
 int sndBitsPerSample=16;
 
@@ -265,30 +268,39 @@ int main(int argc, char **argv)
 	char length_str[256], fade_str[256], volume[256], title_str[256];
 	char tmp_str[256];
 	char *tag;
+    SDL_Thread *thrd;
 
 	soundLowPass = 0;
 	soundEcho = 0;
 	soundQuality = 0;
-
+    
 	DetectSilence=1;
 	silencelength=5;
 	IgnoreTrackLength=0;
 	DefaultLength=150000;
 	TrailingSilence=1000;
 	playforever=0;
+	CliOnly=0;
+	OutputFile = "";
+	noinfo=0;
+	if (!CliOnly) {
+		SDL_Init(SDL_INIT_VIDEO);
+	}
 
-	SDL_Init(SDL_INIT_VIDEO);
 
-
-	while((r=getopt(argc, argv, "hlsrieWL:t:"))>=0)
+	while((r=getopt(argc, argv, "chlsrieqW:L:t:"))>=0)
 	{
 		char *e;
 		switch(r)
 		{
+			case 'c':
+				CliOnly = 1;
+				break;
 			case 'h':
 				printf("playgsf version %s (based on Highly Advanced version %s)\n\n",
 						VERSION_STR, HA_VERSION_STR);
 				printf("Usage: ./playgsf [options] files...\n\n");
+				printf("  -c        CLI only; do not display the SDL GUI\n");
 				printf("  -l        Enable low pass filer\n");
 				printf("  -s        Detect silence\n");
 				printf("  -L        Set silence length in seconds (for detection). Default 5\n");
@@ -296,7 +308,8 @@ int main(int argc, char **argv)
 				printf("  -i        Ignore track length (use default length)\n");
 				printf("  -e        Endless play\n");
 				printf("  -r        Play files in random order\n");
-				printf("  -W        output to 'output.wav' rather than soundcard\n");
+				printf("  -W        output to the specified filename rather than soundcard\n");
+				printf("  -q        Quiet; don't display informational output\n");
 				printf("  -h        Displays what you are reading right now\n");
 				return 0;
 				break;
@@ -331,6 +344,10 @@ int main(int argc, char **argv)
 				break;
 			case 'W':
 				fileoutput = 1;
+				OutputFile = std::string(optarg);
+				break;
+			case 'q':
+				noinfo = 1;
 				break;
 			case '?':
 				fprintf(stderr, "Unknown argument. try -h\n");
@@ -340,22 +357,27 @@ int main(int argc, char **argv)
 	}
 
 	if (argc-optind<=0) {
-		printf("No files specified! For help, try -h\n");
+		fprintf(stderr, "No files specified! For help, try -h\n");
 		return 1;
 	}
 
 
 	if (random) { shuffle_list(&argv[optind], argc-optind); }
 
-	printf("playgsf version %s (based on Highly Advanced version %s)\n\n",
-				VERSION_STR, HA_VERSION_STR);
+	if (!noinfo) {
+		printf("playgsf version %s (based on Highly Advanced version %s)\n\n",
+					VERSION_STR, HA_VERSION_STR);
+	}
 
 	signal(SIGINT, signal_handler);
 
 	tag = (char*)malloc(50001);
 
 	fi = optind;
-	SDL_Thread *thrd = SDL_CreateThread(render_thread, "render thread", NULL);
+	if (!CliOnly) {
+		thrd = SDL_CreateThread(render_thread, "render thread", NULL);
+	}
+    
 	while (!g_must_exit && fi < argc)
 	{
 		decode_pos_ms = 0;
@@ -372,73 +394,84 @@ int main(int argc, char **argv)
 
 		psftag_readfromfile((void*)tag, argv[fi]);
 
-		BOLD(); printf("Filename: "); NORMAL();
-		printf("%s\n", basename(argv[fi]));
-		BOLD(); printf("Channels: "); NORMAL();
-		printf("%d\n", sndNumChannels);
-		BOLD(); printf("Sample rate: "); NORMAL();
-		printf("%d\n", sndSamplesPerSec);
+		if (!noinfo) {
+			BOLD(); printf("Filename: "); NORMAL();
+			printf("%s\n", basename(argv[fi]));
+			BOLD(); printf("Channels: "); NORMAL();
+			printf("%d\n", sndNumChannels);
+			BOLD(); printf("Sample rate: "); NORMAL();
+			printf("%d\n", sndSamplesPerSec);
 
-		if (!psftag_getvar(tag, "title", title_str, sizeof(title_str)-1)) {
-			BOLD(); printf("Title: "); NORMAL();
-			printf("%s\n", title_str);
-		}
+			if (!psftag_getvar(tag, "title", title_str, sizeof(title_str)-1)) {
+				BOLD(); printf("Title: "); NORMAL();
+				printf("%s\n", title_str);
+			}
 
-		if (!psftag_getvar(tag, "artist", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Artist: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "artist", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Artist: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "game", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Game: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "game", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Game: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "year", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Year: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "year", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Year: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "copyright", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Copyright: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "copyright", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Copyright: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "gsfby", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("GSF By: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "gsfby", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("GSF By: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "tagger", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Tagger: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "tagger", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Tagger: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "comment", tmp_str, sizeof(tmp_str)-1)) {
-			BOLD(); printf("Comment: "); NORMAL();
-			printf("%s\n", tmp_str);
-		}
+			if (!psftag_getvar(tag, "comment", tmp_str, sizeof(tmp_str)-1)) {
+				BOLD(); printf("Comment: "); NORMAL();
+				printf("%s\n", tmp_str);
+			}
 
-		if (!psftag_getvar(tag, "fade", fade_str, sizeof(fade_str)-1)) {
-			FadeLength = LengthFromString(fade_str);
-			BOLD(); printf("Fade: "); NORMAL();
-			printf("%s (%d ms)\n", fade_str, FadeLength);
-		}
+			if (!psftag_getvar(tag, "fade", fade_str, sizeof(fade_str)-1)) {
+				FadeLength = LengthFromString(fade_str);
+				BOLD(); printf("Fade: "); NORMAL();
+				printf("%s (%d ms)\n", fade_str, FadeLength);
+			}
 
-		if (!psftag_raw_getvar(tag, "length", length_str, sizeof(length_str)-1)) {
-			TrackLength = LengthFromString(length_str) + FadeLength;
-			BOLD(); printf("Length: "); NORMAL();
-			printf("%s (%d ms) ", length_str, TrackLength);
-			if (IgnoreTrackLength) {
-				printf("(ignored)");
+			if (!psftag_raw_getvar(tag, "length", length_str, sizeof(length_str)-1)) {
+				TrackLength = LengthFromString(length_str) + FadeLength;
+				BOLD(); printf("Length: "); NORMAL();
+				printf("%s (%d ms) ", length_str, TrackLength);
+				if (IgnoreTrackLength) {
+					printf("(ignored)");
+					TrackLength = DefaultLength;
+				}
+				printf("\n");
+			}
+			else {
 				TrackLength = DefaultLength;
 			}
-			printf("\n");
+		} else {
+			if (!psftag_getvar(tag, "fade", fade_str, sizeof(fade_str)-1)) {
+				FadeLength = LengthFromString(fade_str);
+			}
+			
+			if (!psftag_raw_getvar(tag, "length", length_str, sizeof(length_str)-1)) {
+				TrackLength = LengthFromString(length_str) + FadeLength;
+			} else {
+				TrackLength = DefaultLength;
+			}
 		}
-		else {
-			TrackLength = DefaultLength;
-		}
-
 
 		/* Must be done after GSFrun so sndNumchannels and
 		 * sndSamplesPerSec are set to valid values */
@@ -448,7 +481,7 @@ int main(int argc, char **argv)
 		};
 		if(fileoutput) {
 		  snd_ao = ao_open_file(ao_driver_id("wav"),
-					"output.wav", 1,
+					OutputFile.c_str(), 1,
 					&format_ao,
 					NULL);
 		} else {
@@ -466,35 +499,43 @@ int main(int argc, char **argv)
 			}
 			EmulationLoop();
 
-			BOLD(); printf("Time: "); NORMAL();
-			printf("%02d:%02d.%02d ",
-					(int)(decode_pos_ms/1000.0)/60,
-					(int)(decode_pos_ms/1000.0)%60,
-					(int)(decode_pos_ms/10.0)%100);
-			if (!playforever) {
-				/*BOLD();*/ printf("["); /*NORMAL();*/
-				printf("%02d:%02d.%02d",
-					remaining/1000/60, (remaining/1000)%60, (remaining/10%100)
-						);
-				/*BOLD();*/ printf("] of "); /*NORMAL();*/
+			if (!noinfo) {
+				BOLD(); printf("Time: "); NORMAL();
 				printf("%02d:%02d.%02d ",
-					TrackLength/1000/60, (TrackLength/1000)%60, (TrackLength/10%100));
-			}
-			BOLD(); printf("  GBA Cpu: "); NORMAL();
-			printf("%02d%% ", cpupercent);
-			printf("     \r");
+						(int)(decode_pos_ms/1000.0)/60,
+						(int)(decode_pos_ms/1000.0)%60,
+						(int)(decode_pos_ms/10.0)%100);
+				if (!playforever) {
+					/*BOLD();*/ printf("["); /*NORMAL();*/
+					printf("%02d:%02d.%02d",
+						remaining/1000/60, (remaining/1000)%60, (remaining/10%100)
+							);
+					/*BOLD();*/ printf("] of "); /*NORMAL();*/
+					printf("%02d:%02d.%02d ",
+						TrackLength/1000/60, (TrackLength/1000)%60, (TrackLength/10%100));
+				}
+				BOLD(); printf("  GBA Cpu: "); NORMAL();
+				printf("%02d%% ", cpupercent);
+				printf("     \r");
 
-			fflush(stdout);
+				fflush(stdout);
+			}
 		}
-		printf("\n--\n");
+		if (!noinfo) {
+			printf("\n--\n");
+		}
 		ao_close(snd_ao);
 		fi++;
 	}
 
-	SDL_WaitThread(thrd, NULL);
+	if (!CliOnly) {
+		SDL_WaitThread(thrd, NULL);
+	}
 	free(tag);
 	ao_shutdown();
-	SDL_Quit();
+	if (!CliOnly) {
+		SDL_Quit();
+	}
 	return 0;
 }
 
